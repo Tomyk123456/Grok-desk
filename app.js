@@ -14,11 +14,16 @@ const fmtP=v=>{if(v==null)return '—';const a=Math.abs(v);return '$'+(a>=1?v.to
 const hm=ts=>new Date(ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 let route={tab:'home'},CACHE={},LAST_OK=null,ERR=null,RETRY=5,PB=null,range='LIVE';
 
+// plan B: one GET of the basket at most every 15s (Pantry rate-limits hard), shared by all screens
+let PB_AT=0,PB_P=null;
+function loadPB(){if(PB&&Date.now()-PB_AT<15000)return Promise.resolve();if(PB_P)return PB_P;
+ PB_P=fetch(D(),{cache:'no-store'}).then(async r=>{if(!r.ok)throw new Error('offline');PB=await r.json();PB_AT=Date.now();})
+  .catch(e=>{PB_AT=Date.now()-10000;throw e;}).finally(()=>{PB_P=null;});return PB_P;}
 // ---------- data: plan A = /api, plan B = one Pantry JSON with the same shapes ----------
 async function api(path,body){
   if(PLANB()){
     if(body)throw new Error('readonly');
-    if(!PB||path==='state'){const r=await fetch(D(),{cache:'no-store'});if(!r.ok)throw new Error('offline');PB=await r.json();}
+    await loadPB();
     const [p,q]=path.split('?');const parts=p.split('/');
     if(p==='state')return PB.state; if(p==='chart')return PB.chart[(new URLSearchParams(q).get('range'))||'LIVE'];
     if(p==='activity')return PB.activity; if(p==='account')return PB.account; if(p==='settings')return PB.settings;
