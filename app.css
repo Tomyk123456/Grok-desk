@@ -64,3 +64,4 @@ nav#tabs button{flex:1;min-height:50px;color:var(--s3);font-size:11px;font-weigh
 @media (prefers-reduced-motion:reduce){.odo .d i,.beam,.disc,.bar i{transition:none!important}.sk{animation:none}}
 .setup{padding:72px 24px 24px;text-align:center}.setup h1{font:700 30px var(--disp);margin:20px 0 8px}.setup p{margin:0 0 24px;font-size:16px}
 .setup .logo img{border-radius:16px}.setup .inp{text-align:center;font:17px var(--mono);height:54px}.btn:disabled{opacity:.6}
+[hidden]{display:none!important}
