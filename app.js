@@ -14,10 +14,27 @@ const fmtP=v=>{if(v==null)return '—';const a=Math.abs(v);return '$'+(a>=1?v.to
 const hm=ts=>new Date(ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 let route={tab:'home'},CACHE={},LAST_OK=null,ERR=null,RETRY=5,PB=null,range='LIVE';
 
+// ---------- first-run setup (plan B): no data URL and no login -> "Connect your desk" ----------
+const PANTRY_BASE='https://getpantry.cloud/apiv1/pantry/',BASKET='grokdesk';
+function setup(msg){document.querySelector('#tabs').hidden=true;$('#err').hidden=true;
+ $('#view').innerHTML=`<div class="setup"><div class="logo"><img src="icon.svg" alt="" width="72" height="72"></div><h1>Connect your desk</h1>
+ <p class="s2">Paste your Pantry ID from your Pantry email or dashboard. It stays on this phone only.</p>
+ <form id="sf" autocomplete="off"><input class="inp" id="pid" type="password" name="pantry-id" placeholder="Pantry ID" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text">
+ <div id="serr" class="err" ${msg?'':'hidden'} style="margin:10px 0 0">${esc(msg||'')}</div>
+ <button class="btn" id="sb" type="submit" style="margin:16px 0 0;width:100%">Connect</button></form></div>`;
+ $('#sf').onsubmit=async e=>{e.preventDefault();const id=$('#pid').value.trim(),b=$('#sb'),er=$('#serr');er.hidden=true;
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)){er.textContent='That does not look like a Pantry ID (8-4-4-4-12 letters and digits).';er.hidden=false;return;}
+  b.disabled=true;b.textContent='Checking...';const url=PANTRY_BASE+id+'/basket/'+BASKET;
+  try{const r=await fetch(url,{cache:'no-store'});
+   if(r.status===429)throw new Error('Pantry is busy, try again in 15s.');
+   if(!r.ok)throw new Error(r.status===400||r.status===404?'No desk data found for this Pantry ID.':'Pantry answered '+r.status+'.');
+   const j=await r.json();if(!j||!j.state||!j.chart)throw new Error('This basket is not desk data.');
+   localStorage.setItem('desk_d',url);PB=j;PB_AT=Date.now();document.querySelector('#tabs').hidden=false;route={tab:'home'};render();}
+  catch(x){er.textContent=x.message&&!/fetch/i.test(x.message)?x.message:'Could not reach Pantry. Check your connection.';er.hidden=false;b.disabled=false;b.textContent='Connect';}};}
 // plan B: one GET of the basket at most every 15s (Pantry rate-limits hard), shared by all screens
 let PB_AT=0,PB_P=null;
 function loadPB(){if(PB&&Date.now()-PB_AT<15000)return Promise.resolve();if(PB_P)return PB_P;
- PB_P=fetch(D(),{cache:'no-store'}).then(async r=>{if(!r.ok)throw new Error('offline');PB=await r.json();PB_AT=Date.now();})
+ PB_P=fetch(D(),{cache:'no-store'}).then(async r=>{if(r.status===400||r.status===404){localStorage.removeItem('desk_d');PB=null;setup('Your desk data moved. Paste your Pantry ID again.');throw new Error('setup');}if(!r.ok)throw new Error('offline');PB=await r.json();PB_AT=Date.now();})
   .catch(e=>{PB_AT=Date.now()-10000;throw e;}).finally(()=>{PB_P=null;});return PB_P;}
 // ---------- data: plan A = /api, plan B = one Pantry JSON with the same shapes ----------
 async function api(path,body){
@@ -35,7 +52,7 @@ async function api(path,body){
   const r=await fetch('/api/'+path,{method:body?'POST':'GET',headers:{'Authorization':'Bearer '+T(),'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
   if(r.status===401)throw new Error('auth');
   const j=await r.json();if(!r.ok&&!j.message&&!j.results)throw new Error('offline');return j;}
-async function get(path){try{const v=await api(path);CACHE[path]=v;LAST_OK=Date.now();ERR=null;return v;}catch(e){ERR=e.message;if(CACHE[path])return CACHE[path];throw e;}}
+async function get(path){try{const v=await api(path);CACHE[path]=v;LAST_OK=Date.now();ERR=null;return v;}catch(e){if(e.message==='setup')return new Promise(()=>{});ERR=e.message;if(CACHE[path])return CACHE[path];throw e;}}
 
 // ---------- shared pieces ----------
 function nav(){return `<div class="nav"><button class="av" onclick="go({tab:'account'})" aria-label="Account">${esc((CACHE.account?.fomo_handle||'G')[0].toUpperCase())}</button>
@@ -167,7 +184,7 @@ async function account(){const v=$('#view');if(!CACHE.account)v.innerHTML=nav()+
  <div class="list"><a class="row" href="${esc(ac.profile_url)}" target="_blank" rel="noopener"><span class="m"><div class="ti">Your FOMO profile</div><div class="su">@${esc(ac.fomo_handle)}</div></span><span class="s3">›</span></a>
  <button class="row" style="width:100%;text-align:left" onclick="invite('${esc(ac.SIGNUP_URL)}')"><span class="m"><div class="ti">Invite a friend</div><div class="su">10% off fees for life</div></span><span class="s3">›</span></button>
  <div class="row"><span class="m"><div class="ti">Telegram</div><div class="su">${ac.telegram?'connected':'not connected'}</div></span>${ac.telegram&&!PLANB()?'<button class="back" onclick="testPush()">Send test push</button>':''}</div>
- <div class="row"><span class="m"><div class="ti">Notifications</div><div class="su">${ac.webpush?(standalone?'':'Add to Home Screen first'):'Plan B: no web push here, Telegram only'}</div></span>${ac.webpush&&standalone?'<button class="back" onclick="enablePush()">Enable notifications</button>':''}</div></div>
+ ${PLANB()?'<button class="row" style="width:100%;text-align:left" onclick="if(confirm(\'Disconnect this phone from the desk?\')){localStorage.removeItem(\'desk_d\');PB=null;setup();}"><span class="m"><div class="ti r">Disconnect desk</div><div class="su">Forget the Pantry ID on this phone</div></span></button>':''}<div class="row"><span class="m"><div class="ti">Notifications</div><div class="su">${ac.webpush?(standalone?'':'Add to Home Screen first'):'Plan B: no web push here, Telegram only'}</div></span>${ac.webpush&&standalone?'<button class="back" onclick="enablePush()">Enable notifications</button>':''}</div></div>
  ${Object.entries(st).map(([g,keys])=>`<div class="card" id="sec-${g}"><h3 style="text-transform:capitalize">${g}</h3>${Object.entries(keys).filter(([k])=>k!=='fomo_handle').map(([k,s])=>setCtl(g,k,s)).join('')}</div>`).join('')}
  <div class="card"><h3>Command</h3><input class="inp" id="cm" placeholder="status · why X · set stop to -8%" ${PLANB()?'disabled':''}><pre id="cr" class="s2" style="white-space:pre-wrap"></pre><button class="btn" style="margin:8px 0 0;width:100%" onclick="cmd()" ${PLANB()?'disabled':''}>Send</button></div>`;
  if(route.focus)setTimeout(()=>document.getElementById('sec-'+route.focus)?.scrollIntoView(),50);showErr();}
@@ -195,13 +212,13 @@ function bell(){if(!PLANB())api('cmd',{text:'status'}).catch(()=>{});go({tab:'ac
 // ---------- router + refresh ----------
 function go(r){route=r;history.pushState(r,'','#');render();}
 window.onpopstate=e=>{route=e.state||{tab:'home'};render();};
-function render(){document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===(route.tab||'')));
+function render(){if(!T()&&!D())return setup();document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===(route.tab||'')));
  if(route.screen==='coin')return coin(route.mint);if(route.screen==='auditor')return auditor(route.mint);
  return ({home,agents,activity:()=>activity(false),account,search}[route.tab]||home)();}
 document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>go({tab:b.dataset.tab}));
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 (function(){const q=new URLSearchParams(location.search);if(q.get('screen'))route={screen:q.get('screen'),mint:q.get('mint')};else if(q.get('tab'))route={tab:q.get('tab')};})();
 history.replaceState(route,'','');render();
-setInterval(()=>{if(ERR&&ERR!=='auth'){RETRY--;if(RETRY<=0){RETRY=5;render();}else showErr();}},1000);
-setInterval(()=>{if(!ERR&&(route.tab==='home'))home();},PLANB()?15000:5000);
+setInterval(()=>{if(!T()&&!D())return;if(ERR&&ERR!=='auth'){RETRY--;if(RETRY<=0){RETRY=5;render();}else showErr();}},1000);
+setInterval(()=>{if((T()||D())&&!ERR&&(route.tab==='home'))home();},PLANB()?15000:5000);
 if(!PLANB()&&T()&&window.EventSource){try{const es=new EventSource('/api/stream?t='+encodeURIComponent(T()));['fill','exit','balance','verdict','scan'].forEach(k=>es.addEventListener(k,()=>{if(route.tab==='home')home();}));}catch(e){}}
